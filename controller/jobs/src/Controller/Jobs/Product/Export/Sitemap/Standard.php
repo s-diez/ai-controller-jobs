@@ -134,6 +134,80 @@ class Standard
 
 
 	/**
+	 * Adds the given catalog items to the content object for the site map file
+	 *
+	 * @param \Aimeos\MW\Container\Content\Iface $content File content object
+	 * @param \Aimeos\MShop\Product\Item\Iface[] $items List of product items
+	 */
+	protected function addCatalogItems( \Aimeos\MW\Container\Content\Iface $content, array $items )
+	{
+		$config = $this->getContext()->getConfig();
+
+		/** controller/jobs/product/export/sitemap/catalog-changefreq
+		 * Change frequency of the catalog items
+		 *
+		 * Depending on how often the catalog or product content changes (e.g. price updates)
+		 * and the site map files are generated you can give search engines a
+		 * hint how often they should reindex your site. The site map schema
+		 * allows a few pre-defined strings for the change frequency:
+		 * * always
+		 * * hourly
+		 * * daily
+		 * * weekly
+		 * * monthly
+		 * * yearly
+		 * * never
+		 *
+		 * More information can be found at
+		 * {@link http://www.sitemaps.org/protocol.html#xmlTagDefinitions sitemap.org}
+		 *
+		 * @param string One of the pre-defined strings (see description)
+		 * @since 2019.01
+		 * @category User
+		 * @category Developer
+		 * @see controller/jobs/product/export/sitemap/container/options
+		 * @see controller/jobs/product/export/sitemap/location
+		 * @see controller/jobs/product/export/sitemap/max-items
+		 * @see controller/jobs/product/export/sitemap/max-query
+		 */
+		$changefreq = $config->get( 'controller/jobs/product/export/sitemap/catalog-changefreq', 'daily' );
+
+		/** controller/jobs/product/export/sitemap/standard/template-items-catalog
+		 * Relative path to the XML items template of the product site map job controller.
+		 *
+		 * The template file contains the XML code and processing instructions
+		 * to generate the site map files. The configuration string is the path
+		 * to the template file relative to the templates directory (usually in
+		 * controller/jobs/templates).
+		 *
+		 * You can overwrite the template file configuration in extensions and
+		 * provide alternative templates. These alternative templates should be
+		 * named like the default one but with the string "standard" replaced by
+		 * an unique name. You may use the name of your project for this. If
+		 * you've implemented an alternative client class as well, "standard"
+		 * should be replaced by the name of the new class.
+		 *
+		 * @param string Relative path to the template creating XML code for the site map items
+		 * @since 2015.01
+		 * @category Developer
+		 * @see controller/jobs/product/export/sitemap/standard/template-header
+		 * @see controller/jobs/product/export/sitemap/standard/template-footer
+		 * @see controller/jobs/product/export/sitemap/standard/template-index
+		 */
+		$tplconf = 'controller/jobs/product/export/sitemap/standard/template-items-catalog';
+		$default = 'product/export/sitemap-items-catalog-standard';
+
+		$context = $this->getContext();
+		$view = $context->getView();
+
+		$view->siteItems = $items;
+		$view->siteFreq = $changefreq;
+
+		$content->add( $view->render( $context->getConfig()->get( $tplconf, $default ) ) );
+	}
+
+
+	/**
 	 * Creates a new container for the site map file
 	 *
 	 * @return \Aimeos\MW\Container\Iface Container object
@@ -380,6 +454,50 @@ class Standard
 			}
 		}
 		while( $count >= $search->getSliceSize() );
+
+		/** controller/jobs/product/export/sitemap/catalog
+		 * Enables the export of catalog urls in the sitemap.
+		 *
+		 * @param array List of domain names
+		 * @since 2019.01
+		 * @category Developer
+		 * @category User
+		 * @see controller/jobs/product/export/sitemap/container/options
+		 * @see controller/jobs/product/export/sitemap/location
+		 * @see controller/jobs/product/export/sitemap/max-items
+		 * @see controller/jobs/product/export/sitemap/max-query
+		 * @see controller/jobs/product/export/sitemap/changefreq
+		 */
+		$exportCatalog = $this->getContext()->getConfig()->get( 'controller/jobs/product/export/sitemap/catalog', true );
+		if ($exportCatalog) {
+			$productUrlCount = $start;
+			$start = 0;
+			$manager = \Aimeos\MShop::create( $this->getContext(), 'catalog' );
+
+			$search = $manager->createSearch( $default );
+			$search->setSortations( array($search->sort( '+', 'catalog.id' )) );
+			$search->setSlice( 0, $maxQuery );
+
+			if ( $productUrlCount + $maxQuery > $maxItems * $filenum ) {
+				$content = $this->createContent( $container, $filenum );
+				$names[] = $content->getResource();
+			}
+
+			do {
+				$items = $manager->searchItems( $search, $domains );
+				$this->addCatalogItems( $content, $items );
+
+				$count = count( $items );
+				$start += $count;
+				$search->setSlice( $start, $maxQuery );
+
+				if ( $start + $productUrlCount + $maxQuery > $maxItems * $filenum ) {
+					$this->closeContent( $content );
+					$content = $this->createContent( $container, ++$filenum );
+					$names[] = $content->getResource();
+				}
+			} while ($count >= $search->getSliceSize());
+		}
 
 		$this->closeContent( $content );
 
